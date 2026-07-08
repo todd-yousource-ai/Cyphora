@@ -1,0 +1,59 @@
+agent:
+  name: InvestigationAgent
+  version: "1.0"
+
+  metadata:
+    description: "Investigates suspicious security events using multi-model AI analysis"
+    priority: high
+    owner: security_platform
+    tags:
+      - investigation
+      - ai-powered
+      - consensus-validated
+
+  triggers:
+    event_types:
+      - abnormal_process_execution
+      - suspicious_login
+      - privilege_escalation
+
+  data_collection:
+    sources:
+      - endpoint_logs
+      - network_logs
+      - identity_logs
+    time_window: 30m
+    enrich_with_threat_intel: true
+
+  reasoning:
+    ai_models:
+      - model_A
+      - model_B
+      - model_C
+    task: attack_chain_analysis
+    temperature: 0.2
+    max_tokens: 2048
+    chain_of_thought: true
+
+  consensus_validation:
+    method: weighted_vote
+    threshold: 0.80
+    weights:
+      model_A: 0.40
+      model_B: 0.35
+      model_C: 0.25
+    min_models_required: 2
+    timeout_seconds: 30
+
+  actions:
+    - generate_incident_report
+    - notify_soc
+
+  safety_controls:
+    max_runtime: 120s
+    escalation_required: false
+    approval_required: none
+    rate_limit_per_minute: 60
+    dry_run_mode: false
+    kill_switch_enabled: true
+    audit_all_actions: true

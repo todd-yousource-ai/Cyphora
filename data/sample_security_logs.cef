@@ -1,0 +1,75 @@
+################################################################################
+# Cyphora-S1 Sample CEF Log File
+# Contains real-world-format CEF events from three enterprise security products:
+#   CrowdStrike Falcon, Palo Alto Cortex XDR, Okta Identity Platform
+#
+# Place this file at: data/sample_security_logs.cef
+# Or point run_cef_analysis.py at any other CEF log file via --log-file
+################################################################################
+
+================================
+CROWDSTRIKE FALCON CEF LOGS
+================================
+
+# Event 1: Malware Detection — malicious payload quarantined
+CEF:0|CrowdStrike|FalconHost|6.45|DetectionSummaryEvent|Malware Detection|8|rt=1714589234000 dvchost=WIN-SERVER-01 dvc=10.50.22.15 suser=jsmith@company.com cs1Label=DetectId cs1=ldt:a1b2c3d4e5f6g7h8:12345678 cs2Label=Technique cs2=T1059.001 cs3Label=Tactic cs3=Execution cs4Label=Severity cs4=Critical cs5Label=FileName cs5=malicious_payload.exe cs6Label=FilePath cs6=C:\\Users\\jsmith\\Downloads\\malicious_payload.exe fileHash=sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 msg=Malware detected and quarantined src=10.50.22.15 dst=192.168.1.100 dport=443 outcome=blocked
+
+# Event 2: Suspicious PowerShell launched from Word (macro-based attack)
+CEF:0|CrowdStrike|FalconHost|6.45|ProcessRollup2|Suspicious PowerShell Execution|6|rt=1714589456000 dvchost=LAPTOP-HR-05 dvc=10.50.22.89 suser=mwilson@company.com cs1Label=CommandLine cs1=powershell.exe -encodedCommand JABjAGwAaQBlAG4AdAAgAD0AIABOAGUAdwAtAE8AYgBqAGUAYwB0AA cs2Label=ParentProcess cs2=WINWORD.EXE cs3Label=Technique cs3=T1059.001 cs4Label=Tactic cs4=Execution cs5Label=ProcessId cs5=4892 fileHash=sha256:908b64b1971a979c7e3e8ce4621945cba84854cb98d76367b791a6e22b5f6d53 msg=Encoded PowerShell command executed from Office application outcome=logged
+
+# Event 3: Outbound C2 connection to known Cobalt Strike server
+CEF:0|CrowdStrike|FalconHost|6.45|NetworkConnectIP4|Connection to Known C2 Server|9|rt=1714589678000 dvchost=DESKTOP-DEV-12 dvc=10.50.23.45 suser=agarcia@company.com src=10.50.23.45 dst=185.220.101.42 dport=8080 proto=TCP cs1Label=ConnectionDirection cs1=outbound cs2Label=Technique cs2=T1071.001 cs3Label=Tactic cs3=Command and Control cs4Label=ProcessName cs4=chrome.exe cs5Label=ThreatIndicator cs5=Known Cobalt Strike C2 msg=Outbound connection to known command and control infrastructure outcome=blocked
+
+# Event 4: Successful remote desktop logon to domain controller
+CEF:0|CrowdStrike|FalconHost|6.45|UserLogon|Successful User Logon|3|rt=1714589890000 dvchost=WIN-DC-01 dvc=10.50.1.10 suser=admin@company.com src=10.50.22.134 cs1Label=LogonType cs1=RemoteInteractive cs2Label=AuthenticationPackage cs2=Kerberos cs3Label=SessionId cs3=456789 msg=Successful remote desktop logon outcome=success
+
+# Event 5: PsExec lateral movement detected
+CEF:0|CrowdStrike|FalconHost|6.45|DetectionSummaryEvent|Lateral Movement via PsExec|9|rt=1714590010000 dvchost=WIN-DC-01 dvc=10.50.1.10 suser=admin@company.com src=10.50.22.89 dst=10.50.1.10 cs1Label=DetectId cs1=ldt:b2c3d4e5f6g7h8i9:23456789 cs2Label=Technique cs2=T1021.002 cs3Label=Tactic cs3=Lateral Movement cs4Label=Severity cs4=Critical cs5Label=FileName cs5=psexec.exe cs6Label=FilePath cs6=C:\\Windows\\Temp\\psexec.exe msg=PsExec lateral movement detected — service creation on remote host outcome=alerted
+
+# Event 6: Scheduled task created for persistence
+CEF:0|CrowdStrike|FalconHost|6.45|ProcessRollup2|Suspicious Scheduled Task Creation|7|rt=1714590090000 dvchost=WIN-SERVER-01 dvc=10.50.22.15 suser=jsmith@company.com cs1Label=CommandLine cs1=schtasks /create /tn "\\Microsoft\\Windows\\WinUpdate" /tr "C:\\Windows\\Temp\\svc32.exe" /sc ONLOGON /ru SYSTEM /f cs2Label=ParentProcess cs2=cmd.exe cs3Label=Technique cs3=T1053.005 cs4Label=Tactic cs4=Persistence cs5Label=ProcessId cs5=6104 msg=Suspicious scheduled task created masquerading as Windows Update outcome=alerted
+
+================================
+PALO ALTO CORTEX XDR CEF LOGS
+================================
+
+# Event 7: Ransomware mass file encryption detected
+CEF:0|Palo Alto Networks|Cortex XDR|3.4|alert|Ransomware Encryption Activity Detected|10|rt=1714590123000 dvchost=FILESERVER-02 dvc=10.60.10.25 suser=SYSTEM cs1Label=AlertId cs1=12345 cs2Label=Severity cs2=high cs3Label=Category cs3=Malware cs4Label=Description cs4=Multiple file encryption operations detected matching ransomware behavior cs5Label=MitreTactic cs5=Impact cs6Label=MitreTechnique cs6=T1486 fileHash=sha256:d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2 fname=encrypted_file.locked fsize=2048576 msg=Ransomware behavior detected - mass file encryption outcome=alerted
+
+# Event 8: Browser exploit prevention — buffer overflow blocked
+CEF:0|Palo Alto Networks|Cortex XDR|3.4|prevention|Exploit Prevention - Buffer Overflow|8|rt=1714590345000 dvchost=WORKSTATION-15 dvc=10.60.15.88 suser=rdavis@company.com src=10.60.15.88 dst=203.0.113.50 dport=80 cs1Label=PreventionModule cs1=Exploit Protection cs2Label=ThreatName cs2=Generic Buffer Overflow Attempt cs3Label=MitreTechnique cs3=T1203 cs4Label=ApplicationName cs4=iexplore.exe cs5Label=Action cs5=blocked msg=Buffer overflow exploit attempt blocked outcome=blocked
+
+# Event 9: DNS tunnelling data exfiltration
+CEF:0|Palo Alto Networks|Cortex XDR|3.4|network|DNS Tunneling Detected|7|rt=1714590567000 dvchost=LAPTOP-SALES-09 dvc=10.60.20.45 suser=tkhan@company.com src=10.60.20.45 dst=8.8.8.8 dport=53 proto=UDP cs1Label=ThreatType cs1=DNS Tunneling cs2Label=Domain cs2=a1b2c3d4e5f6.malicioustunnel.com cs3Label=MitreTactic cs3=Exfiltration cs4Label=MitreTechnique cs4=T1048.003 cs5Label=QueryCount cs5=847 msg=Abnormal DNS query pattern indicates potential data exfiltration outcome=alerted
+
+# Event 10: Mimikatz credential dump blocked
+CEF:0|Palo Alto Networks|Cortex XDR|3.4|bioc|Credential Dumping Detected|9|rt=1714590789000 dvchost=APP-SERVER-03 dvc=10.60.30.67 suser=service_account@company.com cs1Label=BehaviorIndicator cs1=LSASS Memory Access cs2Label=ProcessName cs2=mimikatz.exe cs3Label=MitreTactic cs3=Credential Access cs4Label=MitreTechnique cs4=T1003.001 cs5Label=ConfidenceScore cs5=95 fileHash=sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1 msg=LSASS process memory access detected - potential credential theft outcome=blocked
+
+# Event 11: WMI remote execution lateral movement
+CEF:0|Palo Alto Networks|Cortex XDR|3.4|bioc|WMI Lateral Movement|9|rt=1714590850000 dvchost=APP-SERVER-03 dvc=10.60.30.67 suser=service_account@company.com src=10.60.30.67 dst=10.60.30.99 cs1Label=AlertId cs1=12346 cs2Label=ProcessName cs2=WmiPrvSE.exe cs3Label=MitreTactic cs3=Lateral Movement cs4Label=MitreTechnique cs4=T1047 cs5Label=ConfidenceScore cs5=88 msg=WMI remote execution to target host - lateral movement indicator outcome=alerted
+
+================================
+OKTA CEF LOGS
+================================
+
+# Event 12: Successful user authentication
+CEF:0|Okta|Okta|2023.11|user.session.start|User Authentication Success|3|rt=1714591012000 suser=jdoe@company.com src=203.0.113.100 cs1Label=SessionId cs1=trs8KvP9qKLx7QbqYB7sK9wXY cs2Label=AuthenticationMethod cs2=PASSWORD cs3Label=DeviceType cs3=Computer cs4Label=Browser cs4=Chrome cs5Label=OS cs5=Windows 10 cs6Label=EventType cs6=user.session.start requestClientApplication=Okta Dashboard msg=User successfully authenticated outcome=success
+
+# Event 13: Failed authentication — invalid credentials
+CEF:0|Okta|Okta|2023.11|user.session.start|User Authentication Failed|5|rt=1714591234000 suser=admin@company.com src=198.51.100.45 cs1Label=Reason cs1=INVALID_CREDENTIALS cs2Label=AuthenticationMethod cs2=PASSWORD cs3Label=DeviceType cs3=Computer cs4Label=Browser cs4=Firefox cs5Label=FailureCount cs5=3 cs6Label=EventType cs6=user.session.start requestClientApplication=Office 365 msg=Authentication failed - invalid password attempt outcome=failure
+
+# Event 14: MFA challenge passed
+CEF:0|Okta|Okta|2023.11|user.authentication.auth_via_mfa|MFA Challenge Success|4|rt=1714591456000 suser=bsmith@company.com src=192.0.2.78 cs1Label=FactorType cs1=token:software:totp cs2Label=Provider cs2=OKTA cs3Label=DeviceType cs3=Mobile cs4Label=EventType cs4=user.authentication.auth_via_mfa cs5Label=SessionId cs5=abc123xyz789def456 msg=Multi-factor authentication successful using TOTP outcome=success
+
+# Event 15: User provisioned to Salesforce application
+CEF:0|Okta|Okta|2023.11|application.user_membership.add|User Added to Application|3|rt=1714591678000 suser=hwilliams@company.com duser=mjohnson@company.com cs1Label=ApplicationName cs1=Salesforce cs2Label=ApplicationId cs2=0oa1b2c3d4e5f6g7h8i9 cs3Label=EventType cs3=application.user_membership.add cs4Label=Actor cs4=hwilliams@company.com cs5Label=Target cs5=mjohnson@company.com msg=User mjohnson@company.com added to Salesforce application outcome=success
+
+# Event 16: Account locked — brute force from suspicious IP
+CEF:0|Okta|Okta|2023.11|user.account.lock|User Account Locked Due to Suspicious Activity|7|rt=1714591890000 suser=suspicious_user@company.com src=185.220.101.35 cs1Label=Reason cs1=MULTIPLE_FAILED_ATTEMPTS cs2Label=EventType cs2=user.account.lock cs3Label=FailedAttempts cs3=10 cs4Label=TimeWindow cs4=300 cs5Label=GeoLocation cs5=Unknown Country cs6Label=ThreatLevel cs6=high msg=Account locked after 10 failed login attempts from suspicious IP outcome=failure
+
+# Event 17: Password reset via email
+CEF:0|Okta|Okta|2023.11|user.account.reset_password|User Password Reset|4|rt=1714592012000 suser=lthompson@company.com src=203.0.113.150 cs1Label=EventType cs1=user.account.reset_password cs2Label=ResetMethod cs2=EMAIL cs3Label=InitiatedBy cs3=User cs4Label=DeviceType cs4=Computer msg=User successfully reset password via email link outcome=success
+
+################################################################################
+# END OF SAMPLE LOG FILE
+################################################################################

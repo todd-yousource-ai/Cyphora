@@ -1,0 +1,94 @@
+agent:
+  name: CyphoraInvestigationAgent
+  version: "2.0"
+  metadata:
+    description: >
+      Cyphora-S1 AI Threat Investigator. Triggers on any high-confidence
+      security event, collects multi-source telemetry, runs LLM-powered
+      analysis, maps findings to MITRE ATT&CK, builds a kill chain,
+      generates a plain-English incident report, and executes the
+      appropriate automated response playbook.
+    priority: critical
+    owner: cyphora_s1_platform
+    tags:
+      - cyphora_s1
+      - ai_investigation
+      - mitre_attack
+      - kill_chain
+      - incident_report
+    version_notes: "v2.0 - Cyphora-S1 AI Threat Investigator with MITRE, UEBA, and Playbook integration"
+
+  triggers:
+    event_types:
+      - suspicious_login
+      - abnormal_process_execution
+      - privilege_escalation
+      - credential_dump
+      - lateral_movement
+      - data_exfiltration
+      - abnormal_file_encryption
+      - anomaly_detected
+      - confirmed_attack
+      - ueba_anomaly
+
+  data_collection:
+    sources:
+      - endpoint_logs
+      - network_logs
+      - identity_logs
+      - file_activity_logs
+      - cloud_logs
+      - aws_cloudtrail
+      - azure_ad
+      - okta
+      - crowdstrike
+      - threat_intel
+    time_window: "30m"
+    max_records: 5000
+    enrich_with_threat_intel: true
+
+  reasoning:
+    ai_models:
+      - claude-sonnet-4-6       # Primary: Anthropic Claude Sonnet
+      - claude-opus-4-6         # Secondary: deeper analysis on critical events
+      - gpt-4o                  # Tie-breaker: independent perspective
+    task: >
+      Analyse the security telemetry for evidence of a cyber attack.
+      Identify the attack type, affected systems, attacker TTPs,
+      and the full attack chain. Map findings to MITRE ATT&CK.
+      Score threat confidence 0.0-1.0. Be conservative — only high
+      confidence threats should score above 0.8.
+    temperature: 0.15
+    max_tokens: 4096
+    chain_of_thought: true
+    system_prompt: >
+      You are Cyphora-S1, an expert AI security analyst with deep knowledge
+      of MITRE ATT&CK, threat hunting, and incident response. Analyse the
+      provided telemetry with precision. Map every finding to a specific
+      ATT&CK technique where possible. Be specific about affected users,
+      hosts, and processes. Flag false positive indicators clearly.
+
+  consensus_validation:
+    method: weighted_vote
+    threshold: 0.75
+    weights:
+      claude-sonnet-4-6: 0.40
+      claude-opus-4-6: 0.35
+      gpt-4o: 0.25
+    min_models_required: 2
+    timeout_seconds: 45
+
+  actions:
+    - generate_incident_report
+    - notify_soc
+    - create_threat_alert
+
+  safety_controls:
+    max_runtime: "180s"
+    escalation_required: false
+    approval_required: none
+    rate_limit_per_minute: 120
+    dry_run_mode: false
+    kill_switch_enabled: true
+    audit_all_actions: true
+

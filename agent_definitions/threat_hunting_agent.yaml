@@ -1,0 +1,50 @@
+agent:
+  name: ThreatHuntingAgent
+  version: "1.0"
+
+  metadata:
+    description: "Proactively hunts for threats every 10 minutes using anomaly detection"
+    priority: medium
+    owner: threat_intel_team
+    tags:
+      - proactive
+      - scheduled
+      - anomaly-detection
+
+  triggers:
+    schedule:
+      interval: 10m
+      start_immediately: true
+
+  data_collection:
+    query:
+      type: anomaly_detection
+      dataset: endpoint_activity
+      lookback: 1h
+      threshold: 0.7
+    time_window: 10m
+
+  reasoning:
+    ai_models:
+      - model_A
+      - model_B
+    task: anomaly_detection
+    temperature: 0.1
+    chain_of_thought: true
+
+  consensus_validation:
+    method: weighted_vote
+    threshold: 0.75
+    weights:
+      model_A: 0.55
+      model_B: 0.45
+    min_models_required: 2
+
+  actions:
+    - create_threat_alert
+
+  safety_controls:
+    max_runtime: 90s
+    approval_required: none
+    dry_run_mode: false
+    audit_all_actions: true

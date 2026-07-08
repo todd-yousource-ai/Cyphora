@@ -1,0 +1,373 @@
+---
+# ACDA-SDK — Kubernetes Deployment Manifests
+# Namespace + RBAC + Deployments for all 3 agents
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cyber-defense
+  labels:
+    app.kubernetes.io/part-of: acda-sdk
+    security.acda.io/managed: "true"
+
+---
+# ── RBAC ──────────────────────────────────────────────────────
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: acda-agent
+  namespace: cyber-defense
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: acda-agent-role
+  namespace: cyber-defense
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: acda-agent-rolebinding
+  namespace: cyber-defense
+subjects:
+  - kind: ServiceAccount
+    name: acda-agent
+    namespace: cyber-defense
+roleRef:
+  kind: Role
+  name: acda-agent-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ── ConfigMap ────────────────────────────────────────────────
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: acda-config
+  namespace: cyber-defense
+data:
+  MAX_CONCURRENT_AGENTS: "200"
+  CONSENSUS_TIMEOUT_SECONDS: "30"
+  LOG_LEVEL: "INFO"
+  DRY_RUN_MODE: "false"
+  METRICS_PORT: "8080"
+
+---
+# ── InvestigationAgent Deployment ────────────────────────────
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: investigation-agent
+  namespace: cyber-defense
+  labels:
+    app: investigation-agent
+    agent-type: investigation
+    version: "1.0"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: investigation-agent
+  template:
+    metadata:
+      labels:
+        app: investigation-agent
+        agent-type: investigation
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: acda-agent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: investigation-agent
+          image: acda-sdk/investigation-agent:1.0
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: metrics
+            - containerPort: 8443
+              name: health
+          env:
+            - name: AGENT_NAME
+              value: "InvestigationAgent"
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: acda-config
+                  key: LOG_LEVEL
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: acda-secrets
+                  key: openai-api-key
+                  optional: true
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: acda-secrets
+                  key: anthropic-api-key
+                  optional: true
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "2Gi"
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8443
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8443
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      terminationGracePeriodSeconds: 60
+
+---
+# ── ThreatHuntingAgent Deployment ────────────────────────────
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: threat-hunting-agent
+  namespace: cyber-defense
+  labels:
+    app: threat-hunting-agent
+    agent-type: proactive
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: threat-hunting-agent
+  template:
+    metadata:
+      labels:
+        app: threat-hunting-agent
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      serviceAccountName: acda-agent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: threat-hunting-agent
+          image: acda-sdk/threat-hunting-agent:1.0
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: metrics
+          env:
+            - name: AGENT_NAME
+              value: "ThreatHuntingAgent"
+            - name: SCHEDULE_INTERVAL
+              value: "10m"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+
+---
+# ── ContainmentAgent Deployment ─────────────────────────────
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: containment-agent
+  namespace: cyber-defense
+  labels:
+    app: containment-agent
+    agent-type: containment
+    risk-level: high
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: containment-agent
+  template:
+    metadata:
+      labels:
+        app: containment-agent
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        security.acda.io/approval-required: "high_risk"
+    spec:
+      serviceAccountName: acda-agent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: containment-agent
+          image: acda-sdk/containment-agent:1.0
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: AGENT_NAME
+              value: "ContainmentAgent"
+            - name: APPROVAL_REQUIRED
+              value: "high_risk"
+            - name: DRY_RUN_MODE
+              value: "false"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "2Gi"
+
+---
+# ── Agent Orchestrator Deployment ────────────────────────────
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-orchestrator
+  namespace: cyber-defense
+  labels:
+    app: agent-orchestrator
+    component: orchestrator
+spec:
+  replicas: 2  # HA pair
+  selector:
+    matchLabels:
+      app: agent-orchestrator
+  template:
+    metadata:
+      labels:
+        app: agent-orchestrator
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    spec:
+      serviceAccountName: acda-agent
+      containers:
+        - name: orchestrator
+          image: acda-sdk/orchestrator:1.0
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 9090
+              name: metrics
+            - containerPort: 8080
+              name: api
+          env:
+            - name: MAX_CONCURRENT_AGENTS
+              valueFrom:
+                configMapKeyRef:
+                  name: acda-config
+                  key: MAX_CONCURRENT_AGENTS
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "4Gi"
+
+---
+# ── Services ─────────────────────────────────────────────────
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestrator-api
+  namespace: cyber-defense
+spec:
+  selector:
+    app: agent-orchestrator
+  ports:
+    - name: api
+      port: 80
+      targetPort: 8080
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+  type: ClusterIP
+
+---
+# ── HorizontalPodAutoscaler ───────────────────────────────────
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: investigation-agent-hpa
+  namespace: cyber-defense
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: investigation-agent
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+---
+# ── NetworkPolicy ────────────────────────────────────────────
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: acda-network-policy
+  namespace: cyber-defense
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: acda-sdk
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cyber-defense
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cyber-defense
+    - to: []  # Allow external AI API calls
+      ports:
+        - protocol: TCP
+          port: 443

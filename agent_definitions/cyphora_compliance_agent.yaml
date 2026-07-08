@@ -1,0 +1,72 @@
+agent:
+  name: CyphoraComplianceAgent
+  version: "1.0"
+  metadata:
+    description: >
+      Cyphora-S1 Compliance Evidence Agent. Runs weekly (or on-demand)
+      to collect evidence across all connected data sources and generate
+      compliance reports for SOC 2, ISO 27001, PCI-DSS, HIPAA, and NIS2.
+      Reduces audit preparation from weeks to hours.
+    priority: medium
+    owner: cyphora_s1_platform
+    tags:
+      - cyphora_s1
+      - compliance
+      - soc2
+      - iso27001
+      - pcidss
+      - hipaa
+      - nis2
+      - audit
+
+  triggers:
+    schedule:
+      interval: "7d"
+      start_immediately: false
+
+  data_collection:
+    sources:
+      - identity_logs
+      - endpoint_logs
+      - network_logs
+      - aws_cloudtrail
+      - azure_ad
+      - okta
+      - github_audit
+      - gcp_audit
+      - threat_intel
+    time_window: "2160h"      # 90 days — standard audit evidence period
+    max_records: 50000
+    enrich_with_threat_intel: false
+
+  reasoning:
+    ai_models:
+      - claude-sonnet-4-6
+    task: >
+      Review collected security logs and identify which compliance controls
+      are satisfied by the available evidence. Flag controls with
+      insufficient evidence as gaps. Provide specific recommendations
+      for closing each compliance gap.
+    temperature: 0.1
+    max_tokens: 4096
+    chain_of_thought: true
+
+  consensus_validation:
+    method: majority_vote
+    threshold: 0.60
+    min_models_required: 1
+    timeout_seconds: 60
+
+  actions:
+    - compliance_report       # Cyphora-S1 extension
+    - notify_soc
+    - generate_incident_report
+
+  safety_controls:
+    max_runtime: "600s"       # Compliance reports take longer
+    approval_required: none
+    rate_limit_per_minute: 10
+    dry_run_mode: false
+    kill_switch_enabled: true
+    audit_all_actions: true
+

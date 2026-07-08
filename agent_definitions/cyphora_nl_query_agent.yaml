@@ -1,0 +1,62 @@
+agent:
+  name: CyphoraNLQueryAgent
+  version: "1.0"
+  metadata:
+    description: >
+      Cyphora-S1 Natural Language Query Agent. Responds to nl_query events
+      triggered by the query interface. Parses the natural language question,
+      routes it to the appropriate data sources, and returns formatted results.
+      Powers the "Ask Cyphora" interface in the SOC dashboard.
+    priority: medium
+    owner: cyphora_s1_platform
+    tags:
+      - cyphora_s1
+      - nl_query
+      - natural_language
+      - soc_interface
+
+  triggers:
+    event_types:
+      - nl_query
+
+  data_collection:
+    sources:
+      - endpoint_logs
+      - identity_logs
+      - network_logs
+      - file_activity_logs
+      - cloud_logs
+      - aws_cloudtrail
+      - azure_ad
+      - okta
+    time_window: "24h"        # overridden dynamically by NLQueryEngine
+    max_records: 1000
+    enrich_with_threat_intel: false
+
+  reasoning:
+    ai_models:
+      - claude-sonnet-4-6
+    task: >
+      Parse the natural language security query in the event's raw_data
+      field. Identify the data sources, time window, filters, and
+      output format requested. Return structured query parameters as JSON.
+    temperature: 0.05
+    max_tokens: 1024
+    chain_of_thought: false
+
+  consensus_validation:
+    method: majority_vote
+    threshold: 0.50
+    min_models_required: 1
+    timeout_seconds: 20
+
+  actions:
+    - nl_query_execute        # Cyphora-S1 extension
+
+  safety_controls:
+    max_runtime: "60s"
+    approval_required: none
+    rate_limit_per_minute: 30
+    dry_run_mode: false
+    kill_switch_enabled: true
+    audit_all_actions: false  # NL queries are read-only; don't need full audit

@@ -1,0 +1,37 @@
+agent:
+  name: ContainmentAgent
+  version: "1.0"
+
+  metadata:
+    description: "Executes immediate network and identity containment on confirmed attacks"
+    priority: critical
+    owner: incident_response_team
+    tags:
+      - containment
+      - destructive
+      - approval-required
+
+  triggers:
+    event_types:
+      - confirmed_attack
+
+  data_collection:
+    sources:
+      - endpoint_logs
+      - network_logs
+      - identity_logs
+    time_window: 15m
+
+  actions:
+    - isolate_host
+    - block_ip
+    - disable_account
+
+  safety_controls:
+    max_runtime: 60s
+    escalation_required: true
+    approval_required: high_risk
+    rate_limit_per_minute: 10
+    dry_run_mode: false
+    kill_switch_enabled: true
+    audit_all_actions: true

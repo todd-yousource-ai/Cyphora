@@ -1,0 +1,76 @@
+agent:
+  name: CyphoraUEBAAgent
+  version: "1.0"
+  metadata:
+    description: >
+      Cyphora-S1 UEBA Agent. Runs on a schedule and on-demand to maintain
+      behavioral baselines for all users and entities. Detects deviations
+      from normal behavior that indicate insider threats, compromised
+      accounts, or advanced persistent threats using statistical anomaly
+      scoring.
+    priority: high
+    owner: cyphora_s1_platform
+    tags:
+      - cyphora_s1
+      - ueba
+      - insider_threat
+      - behavioral_analytics
+      - baseline
+
+  triggers:
+    event_types:
+      - suspicious_login
+      - privilege_escalation
+      - data_exfiltration
+      - anomaly_detected
+      - lateral_movement
+    schedule:
+      interval: "1h"
+      start_immediately: true
+
+  data_collection:
+    sources:
+      - identity_logs
+      - endpoint_logs
+      - network_logs
+      - file_activity_logs
+      - okta
+      - azure_ad
+    time_window: "24h"
+    max_records: 10000
+    enrich_with_threat_intel: true
+
+  reasoning:
+    ai_models:
+      - claude-sonnet-4-6
+      - gpt-4o
+    task: >
+      Analyse user and entity behavior for anomalies. Compare observed
+      activity against the entity's baseline. Identify deviations
+      that may indicate insider threat, credential compromise, or
+      lateral movement. Score each anomaly 0.0-1.0 by severity.
+    temperature: 0.1
+    max_tokens: 2048
+    chain_of_thought: true
+
+  consensus_validation:
+    method: weighted_vote
+    threshold: 0.70
+    weights:
+      claude-sonnet-4-6: 0.55
+      gpt-4o: 0.45
+    min_models_required: 1
+    timeout_seconds: 30
+
+  actions:
+    - create_threat_alert
+    - notify_soc
+
+  safety_controls:
+    max_runtime: "120s"
+    approval_required: none
+    rate_limit_per_minute: 60
+    dry_run_mode: false
+    kill_switch_enabled: true
+    audit_all_actions: true
+

@@ -1,0 +1,31 @@
+# Secrets & environment — never commit
+.env
+.env.*
+*.pem
+*.key
+k8s/cyphora_secrets.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Compiled agent output (produced by `acda build`)
+generated_agents/*.py
+!generated_agents/__init__.py
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

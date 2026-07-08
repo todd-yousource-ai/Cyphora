@@ -1,0 +1,62 @@
+# ─────────────────────────────────────────────────────────────
+# Cyphora-S1 SDK — requirements.txt
+# Updated from ACDA-SDK v1.1 to Cyphora-S1 v2.0
+# ─────────────────────────────────────────────────────────────
+
+# Core
+asyncio-mqtt==0.16.2
+pydantic==2.5.3
+pydantic-settings==2.1.0
+PyYAML==6.0.1
+jsonschema==4.21.1
+click==8.1.7
+rich==13.7.0
+jinja2==3.1.3
+
+# Event streaming
+aiokafka==0.10.0
+aio-pika==9.3.1
+
+# AI / LLM integrations  [UPDATED]
+openai==1.20.0           # was 1.12.0 — required for GPT-4o structured outputs
+anthropic==0.25.0        # was 0.18.1 — required for claude-sonnet-4-6 / claude-opus-4-6
+httpx==0.27.0            # was 0.26.0 — used by Azure AD, Okta, CrowdStrike, GitHub, Palo Alto adapters
+tiktoken==0.6.0          # NEW — token counting for LLM prompt management
+
+# Cloud log source adapters  [ALL NEW — Cyphora-S1]
+boto3==1.34.60           # NEW — AWS CloudTrail (AWSCloudTrailAdapter)
+google-cloud-logging==3.9.0  # NEW — GCP Audit Logs (GCPAuditAdapter)
+# azure-identity and msgraph are optional — AzureADAdapter uses httpx directly
+
+# Graph engine
+neo4j==5.17.0
+networkx==3.2.1
+
+# Observability
+prometheus-client==0.19.0
+opentelemetry-sdk==1.22.0
+opentelemetry-api==1.22.0
+structlog==24.1.0
+
+# Storage / State  [UPDATED]
+redis==5.0.1             # UEBAEngine baseline persistence (in-memory fallback available)
+motor==3.3.2
+
+# Testing
+pytest==7.4.4
+pytest-asyncio==0.23.3
+pytest-cov==4.1.0
+pytest-mock==3.12.0
+freezegun==1.4.0
+
+# Code generation
+black==24.1.1
+isort==5.13.2
+
+# Container / Deployment
+kubernetes==29.0.0
+docker==7.0.0
+
+# Security
+cryptography==42.0.2
+python-jose[cryptography]==3.3.0
