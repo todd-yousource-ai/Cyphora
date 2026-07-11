@@ -161,6 +161,7 @@ class CyphoraInvestigationAgent(BaseAgent):
         self,
         ueba_redis_url: Optional[str] = None,
         playbook_dry_run: bool = False,
+        playbook_approval_mode: str = "auto",
     ) -> None:
         super().__init__(name="CyphoraInvestigationAgent", version="2.0")
 
@@ -193,9 +194,13 @@ class CyphoraInvestigationAgent(BaseAgent):
 
         self._threat_investigator = ThreatInvestigator(llm_model="claude-sonnet-4-6")
         self._ueba_engine = UEBAEngine(redis_url=ueba_redis_url)
+        # approval_mode defaults to "auto" but is overridden by the
+        # CYPHORA_PLAYBOOK_APPROVAL_MODE env var inside PlaybookEngine.
+        # Set it to "auto_approve" for unattended simulations so
+        # approval-gated steps run immediately instead of blocking ~30s each.
         self._playbook_engine = PlaybookEngine(
             dry_run=playbook_dry_run,
-            approval_mode="auto",
+            approval_mode=playbook_approval_mode,
         )
 
     # ── ACDA-SDK pipeline overrides ────────────────────────────

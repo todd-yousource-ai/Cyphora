@@ -336,6 +336,11 @@ class ActionExecutor:
                  are submitted to the queue; execution waits up to
                  auto_approve_seconds, then auto-denies if no response.
       "manual" — same but with a longer default timeout.
+      "auto_approve" — unattended/simulation mode: gated actions are
+                 submitted to the queue (for audit) and immediately
+                 approved so execution proceeds without waiting for an
+                 analyst. Use only for simulations or trusted autonomous
+                 deployments — never where human approval is mandatory.
 
     Callers can inject a custom ApprovalQueue (e.g. per-tenant) via
     the approval_queue parameter.
@@ -428,10 +433,24 @@ class ActionExecutor:
             action_risk if action_risk in APPROVAL_HIERARCHY else "medium_risk"
         )
 
-        if action_risk_idx > required_idx:
-            # Action risk exceeds the configured approval threshold —
+        # approval_required names the risk level AT WHICH (and above) an
+        # analyst decision is mandatory. Gate when the action's risk meets
+        # OR exceeds that level. Using '>' (the previous behaviour) made
+        # approval_required an auto-approve *ceiling*: a high_risk action
+        # under approval_required='high_risk' skipped the queue entirely.
+        if action_risk_idx >= required_idx and self.approval_required != "none":
+            # Action risk meets/exceeds the configured approval threshold —
             # submit to queue and wait for analyst decision.
             pending = await self._approval_queue.submit(action_name, event)
+            if self.approval_mode == "auto_approve":
+                # Unattended / simulation mode: grant approval immediately so
+                # the action actually executes instead of blocking until the
+                # step timeout fires and auto-denies. The approval is still
+                # recorded in the queue for audit purposes.
+                self._approval_queue.approve(
+                    pending.approval_id, analyst_id="auto_approve",
+                    note="Auto-approved (unattended simulation mode)",
+                )
             decision = await self._approval_queue.wait_for_decision(
                 pending.approval_id, timeout=float(self.auto_approve_seconds)
             )

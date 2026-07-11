@@ -74,7 +74,8 @@ async def main() -> None:
     print("─" * 60)
 
     status = orchestrator.status()
-    for agent_name, stats in status.items():
+    per_agent = status.get("per_agent", {})
+    for agent_name, stats in per_agent.items():
         print(f"\nAgent : {agent_name}")
         print(f"  Executions  : {stats.get('total_executions', 0)}")
         print(f"  Completed   : {stats.get('completed', 0)}")

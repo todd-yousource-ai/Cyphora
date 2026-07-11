@@ -45,8 +45,8 @@ async def demo_direct_ueba() -> None:
         severity="high",
         timestamp=datetime.now(tz=timezone.utc).isoformat(),
         source_ip="203.0.113.99",  # RFC 5737 documentation IP
-        user_id="alice@corp.example",
-        host="workstation-17",
+        user="alice@corp.example",
+        source_host="workstation-17",
         raw_data={
             "login_hour": 3,
             "failed_logins": 0,
@@ -55,10 +55,11 @@ async def demo_direct_ueba() -> None:
         },
     )
 
-    # Minimal CollectedData (normally populated by DataCollector)
+    # Minimal CollectedData (normally populated by DataCollector). The schema
+    # requires the triggering `event` and carries telemetry rows in `logs`.
     data = CollectedData(
-        sources_queried=["identity_logs"],
-        records=[
+        event=event,
+        logs=[
             {
                 "source": "identity_logs",
                 "event_type": "login",
@@ -68,8 +69,6 @@ async def demo_direct_ueba() -> None:
                 "success": True,
             }
         ],
-        time_window_start=event.timestamp,
-        time_window_end=event.timestamp,
     )
 
     ueba_report = await engine.analyze(event, data)
@@ -118,7 +117,8 @@ async def demo_ueba_agent() -> None:
     await asyncio.sleep(8)
 
     status = orchestrator.status()
-    for agent_name, stats in status.items():
+    per_agent = status.get("per_agent", {})
+    for agent_name, stats in per_agent.items():
         print(f"\n  Agent   : {agent_name}")
         print(
             f"  Status  : completed={stats.get('completed', 0)}  errors={stats.get('errors', 0)}"

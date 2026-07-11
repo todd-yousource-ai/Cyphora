@@ -54,12 +54,16 @@ class ConsensusValidator:
         weights: Optional[Dict[str, float]] = None,
         min_models_required: int = 2,
         timeout_seconds: int = 30,
+        quorum_fraction: float = 0.67,
     ) -> None:
         self.method = ConsensusMethod(method)
         self.threshold = threshold
         self.weights = weights or {}
         self.min_models_required = min_models_required
         self.timeout_seconds = timeout_seconds
+        # FIX (CQH-UT-009): quorum fraction is now configurable instead of
+        # being hard-wired to 0.67 and unreachable from the dispatch path.
+        self.quorum_fraction = quorum_fraction
 
     # ─────────────────────────────────────────────────────────
 
@@ -90,7 +94,7 @@ class ConsensusValidator:
                 elif self.method == ConsensusMethod.UNANIMOUS:
                     return self._unanimous(scores)
                 elif self.method == ConsensusMethod.QUORUM:
-                    return self._quorum(scores)
+                    return self._quorum(scores, self.quorum_fraction)
                 else:
                     raise ValueError(f"Unknown consensus method: {self.method}")
 
@@ -128,13 +132,31 @@ class ConsensusValidator:
         weighted_sum = 0.0
         breakdown = []
 
+        # BUG FIX (direction-blindness): the vote must reflect the model's
+        # THREAT verdict (score/label), not merely how certain the model is.
+        # Previously contribution = weight * confidence, so three unanimous
+        # HIGH-CONFIDENCE BENIGN verdicts (score≈0.02, confidence≈0.95) scored
+        # ~0.95 and PASSED the threat gate, authorizing containment on traffic
+        # every model declared benign. We now weight the threat score, damped
+        # by the model's confidence, and treat explicit benign labels as a
+        # zero (negative) vote.
+        _BENIGN_LABELS = {"benign", "clean", "no_threat", "safe", "normal"}
+        _NULL_LABELS = {"error", "timeout", "parse_error", "unknown"}
         for s in scores:
             w = weight_map.get(s.model_id, 0.0)
-            contribution = w * s.confidence
+            label = (s.label or "").lower()
+            if label in _BENIGN_LABELS:
+                threat_signal = 0.0
+            else:
+                # score is the 0..1 threat likelihood; damp by confidence so a
+                # tentative threat verdict contributes less than a certain one.
+                threat_signal = s.score * s.confidence
+            contribution = w * threat_signal
             weighted_sum += contribution
             breakdown.append(
-                f"{s.model_id}: score={s.score:.3f} confidence={s.confidence:.3f} "
-                f"weight={w:.3f} contribution={contribution:.4f}"
+                f"{s.model_id}: score={s.score:.3f} label={s.label} "
+                f"confidence={s.confidence:.3f} weight={w:.3f} "
+                f"contribution={contribution:.4f}"
             )
 
         consensus_score = weighted_sum / total_weight

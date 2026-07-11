@@ -278,4 +278,18 @@ print()
 print("=" * 70)
 print(f"RESULT: {PASS} passed, {FAIL} failed")
 print("=" * 70)
-sys.exit(1 if FAIL else 0)
+
+
+def test_ocsf_support():
+    """Pytest entry point: the checks above run at import; assert none failed.
+
+    FIX (CQH-INT-003): previously this module called sys.exit() at import
+    time, which raised SystemExit during pytest collection and broke the
+    documented `pytest tests/` command for the whole suite. The exit is now
+    guarded behind __main__ and the pass/fail result is asserted here.
+    """
+    assert FAIL == 0, f"{FAIL} OCSF support checks failed"
+
+
+if __name__ == "__main__":
+    sys.exit(1 if FAIL else 0)

@@ -64,14 +64,22 @@ async def _get_discovery(discovery_url: str) -> Dict:
         return resp.json()
 
 
-def get_authorization_url(state: Optional[str] = None, tenant_hint: Optional[str] = None) -> str:
+def get_authorization_url(
+    state: Optional[str] = None, tenant_hint: Optional[str] = None
+) -> tuple[str, str]:
     """
     Generate OIDC authorization URL for redirect-based login.
-    Returns (url, state) tuple.
+    Returns an (url, state) tuple. The caller must retain `state` — it is the
+    CSRF/PKCE key that exchange_code() later requires.
+
+    FIX (CQH-MNT-005): previously every branch returned a bare string, so a
+    caller doing `url, state = get_authorization_url()` unpacked the string
+    character-by-character and lost the state value.
     """
     if not is_configured():
         logger.warning("oidc_not_configured_returning_stub_url")
-        return f"/auth/oidc/login?stub=true"
+        stub_state = state or secrets.token_urlsafe(32)
+        return "/auth/oidc/login?stub=true", stub_state
 
     state    = state or secrets.token_urlsafe(32)
     verifier = secrets.token_urlsafe(64)
@@ -99,7 +107,11 @@ def get_authorization_url(state: Optional[str] = None, tenant_hint: Optional[str
 
     logger.info("oidc_authorization_redirect", state=state[:8] + "...")
     # In production fetch discovery URL to get authorization_endpoint
-    return f"{_DISCOVERY_URL.replace('/.well-known/openid-configuration', '/authorize')}?{urlencode(params)}"
+    url = (
+        f"{_DISCOVERY_URL.replace('/.well-known/openid-configuration', '/authorize')}"
+        f"?{urlencode(params)}"
+    )
+    return url, state
 
 
 async def exchange_code(code: str, state: str) -> CyphoraUser:
@@ -108,13 +120,22 @@ async def exchange_code(code: str, state: str) -> CyphoraUser:
     Validates state and PKCE code_verifier.
     """
     if not is_configured():
-        logger.warning("oidc_stub_mode_accepting_any_code")
-        return CyphoraUser(
-            user_id="stub-" + str(uuid.uuid4()),
-            email="dev@cyphora-s1.local",
-            tenant_id="dev",
-            role=Role.ANALYST,
-            display_name="Dev User (OIDC Stub)",
+        # FIX (CQH-SEC-003): previously this returned a valid ANALYST user for
+        # ANY code whenever the OIDC env vars were unset (the default state),
+        # i.e. a silent authentication bypass. Fail closed. A local dev stub is
+        # available only behind an explicit opt-in flag.
+        if os.getenv("CYPHORA_AUTH_DEV_STUB", "").lower() in ("1", "true", "yes"):
+            logger.warning("oidc_stub_mode_dev_only_accepting_any_code")
+            return CyphoraUser(
+                user_id="stub-" + str(uuid.uuid4()),
+                email="dev@cyphora-s1.local",
+                tenant_id="dev",
+                role=Role.ANALYST,
+                display_name="Dev User (OIDC Stub)",
+            )
+        raise ValueError(
+            "OIDC is not configured. Set the OIDC provider environment "
+            "variables (or CYPHORA_AUTH_DEV_STUB=1 for local development)."
         )
 
     state_data = _STATE_STORE.pop(state, None)
@@ -142,10 +163,30 @@ async def exchange_code(code: str, state: str) -> CyphoraUser:
         tokens = token_resp.json()
 
     import jwt as pyjwt
-    # Fetch JWKS and validate id_token signature in production
-    # For now decode without verification to extract claims (add verify=True in prod)
+    # FIX (CQH-SEC-002): verify the id_token signature against the IdP's JWKS
+    # and validate audience/issuer/expiry. Previously the token was decoded
+    # with verify_signature=False and the (unverified) cyphora_role claim was
+    # mapped straight to a role — an attacker who could present an id_token with
+    # cyphora_role=admin obtained an authenticated admin user.
     id_token = tokens.get("id_token", "")
-    claims   = pyjwt.decode(id_token, options={"verify_signature": False})
+    if not id_token:
+        raise ValueError("OIDC token response missing id_token")
+
+    jwks_uri = discovery.get("jwks_uri")
+    issuer = discovery.get("issuer")
+    if not jwks_uri:
+        raise ValueError("OIDC discovery document missing jwks_uri")
+
+    jwk_client = pyjwt.PyJWKClient(jwks_uri)
+    signing_key = jwk_client.get_signing_key_from_jwt(id_token)
+    claims = pyjwt.decode(
+        id_token,
+        signing_key.key,
+        algorithms=["RS256", "ES256"],
+        audience=_CLIENT_ID,
+        issuer=issuer,
+        options={"require": ["exp", "iat"]},
+    )
 
     email     = claims.get("email", "")
     tenant_id = claims.get(_CLAIM_TENANT, state_data.get("tenant") or "default")

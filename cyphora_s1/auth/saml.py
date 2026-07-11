@@ -104,9 +104,18 @@ class SAMLProvider:
             ValueError: if assertion is invalid or required attributes missing.
         """
         if not self._config.is_configured():
-            # Stub: simulate successful assertion for development/testing
-            logger.warning("saml_stub_mode_accepting_any_response")
-            return self._stub_user()
+            # FIX (CQH-SEC-003): previously any/no SAMLResponse was accepted as
+            # a valid ANALYST whenever SAML was unconfigured (the default) — a
+            # silent authentication bypass. Fail closed; the dev stub requires
+            # an explicit opt-in flag.
+            import os
+            if os.getenv("CYPHORA_AUTH_DEV_STUB", "").lower() in ("1", "true", "yes"):
+                logger.warning("saml_stub_mode_dev_only_accepting_any_response")
+                return self._stub_user()
+            raise ValueError(
+                "SAML is not configured. Configure the IdP settings "
+                "(or set CYPHORA_AUTH_DEV_STUB=1 for local development)."
+            )
 
         # Production: validate and parse
         # from onelogin.saml2.auth import OneLogin_Saml2_Auth

@@ -352,12 +352,33 @@ class PlaybookEngine:
         approval_mode: str = "auto",
         pagerduty_key: Optional[str] = None,
         approval_queue: Optional[ApprovalQueue] = None,
+        auto_approve_seconds: Optional[float] = None,
+        step_timeout_seconds: Optional[float] = None,
     ) -> None:
         self._dry_run          = dry_run
-        self._approval_mode    = approval_mode
+        # approval_mode may be overridden via CYPHORA_PLAYBOOK_APPROVAL_MODE.
+        # Use "auto_approve" for simulations so approval-gated steps execute
+        # immediately instead of blocking until the step timeout auto-denies.
+        self._approval_mode    = os.getenv("CYPHORA_PLAYBOOK_APPROVAL_MODE", approval_mode)
         self._pagerduty        = PagerDutyIntegration(integration_key=pagerduty_key)
         self._custom_playbooks: Dict[str, List[PlaybookStep]] = {}
         self._approval_queue   = approval_queue
+
+        # How long a gated step waits for an analyst decision before
+        # auto-denying (only relevant in "auto"/"manual" modes). Configurable
+        # so long-running simulations can shorten the wait.
+        env_approve = os.getenv("CYPHORA_APPROVAL_TIMEOUT_SECONDS")
+        self._auto_approve_seconds = (
+            float(env_approve) if env_approve is not None
+            else (auto_approve_seconds if auto_approve_seconds is not None else 300.0)
+        )
+
+        # Per-step execution timeout override. When set, replaces each step's
+        # own timeout_seconds — lets simulations bound total playbook time.
+        env_step = os.getenv("CYPHORA_PLAYBOOK_STEP_TIMEOUT_SECONDS")
+        self._step_timeout_seconds = (
+            float(env_step) if env_step is not None else step_timeout_seconds
+        )
 
         # BUG 8 FIX: per-execution rollback log
         # execution_id → list of ExecutedStep (in execution order)
@@ -633,6 +654,11 @@ class PlaybookEngine:
     async def _execute_step(self, step: PlaybookStep, event: SecurityEvent) -> ActionResult:
         now = datetime.now(tz=timezone.utc).isoformat()
         dry = self._dry_run or step.dry_run_override
+        # Engine-level override wins over the step's own timeout, so simulations
+        # can bound total playbook wall-clock without editing every step.
+        step_timeout = (self._step_timeout_seconds
+                        if self._step_timeout_seconds is not None
+                        else step.timeout_seconds)
 
         if step.action == "pagerduty_incident":
             if dry:
@@ -640,7 +666,7 @@ class PlaybookEngine:
                                     output={"dry_run": True}, dry_run=True)
             try:
                 result = await asyncio.wait_for(
-                    self._pagerduty.create_incident(event), timeout=step.timeout_seconds)
+                    self._pagerduty.create_incident(event), timeout=step_timeout)
                 if not isinstance(result, dict):
                     raise ValueError(f"PagerDuty returned {type(result).__name__}")
                 return ActionResult(action="pagerduty_incident",
@@ -648,7 +674,7 @@ class PlaybookEngine:
                                     timestamp=now, output=result)
             except asyncio.TimeoutError:
                 return ActionResult(action="pagerduty_incident", success=False, timestamp=now,
-                                    error=f"PagerDuty timed out after {step.timeout_seconds}s")
+                                    error=f"PagerDuty timed out after {step_timeout}s")
             except Exception as exc:
                 return ActionResult(action="pagerduty_incident", success=False,
                                     timestamp=now, error=str(exc))
@@ -656,17 +682,19 @@ class PlaybookEngine:
         executor = ActionExecutor(
             actions=[step.action], approval_required=step.approval_required,
             dry_run=dry, rate_limit_per_minute=120,
+            approval_mode=self._approval_mode,
+            auto_approve_seconds=int(self._auto_approve_seconds),
             approval_queue=self._approval_queue,
         )
         try:
             results = await asyncio.wait_for(
-                executor.run(event), timeout=step.timeout_seconds)
+                executor.run(event), timeout=step_timeout)
             return (results[0] if results else
                     ActionResult(action=step.action, success=False, timestamp=now,
                                  error="No result returned from executor"))
         except asyncio.TimeoutError:
             return ActionResult(action=step.action, success=False, timestamp=now,
-                                error=f"Step timed out after {step.timeout_seconds}s")
+                                error=f"Step timed out after {step_timeout}s")
 
     async def select_playbook(self, event: SecurityEvent) -> Optional[str]:
         mapping = {

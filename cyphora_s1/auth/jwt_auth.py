@@ -37,9 +37,42 @@ from cyphora_s1.auth.models import CyphoraUser, Role, TokenPayload
 
 logger = structlog.get_logger(__name__)
 
-_SECRET      = os.getenv("CYPHORA_JWT_SECRET", "CHANGE_ME_USE_32PLUS_CHARS_IN_PRODUCTION")
+
+class AuthenticationError(Exception):
+    pass
+
+
+_DEFAULT_SECRET = "CHANGE_ME_USE_32PLUS_CHARS_IN_PRODUCTION"
+_SECRET      = os.getenv("CYPHORA_JWT_SECRET", _DEFAULT_SECRET)
 _ALGORITHM   = os.getenv("CYPHORA_JWT_ALGORITHM", "HS256")
 _EXPIRE_MINS = int(os.getenv("CYPHORA_JWT_EXPIRE_MINS", "480"))
+
+
+def _require_secure_secret() -> str:
+    """
+    Return the configured signing secret, or raise if it is missing, the
+    shipped default, or too short.
+
+    FIX (CQH-SEC-004): any deployment that omits CYPHORA_JWT_SECRET previously
+    signed and verified every session token with a publicly known constant,
+    letting an attacker forge admin tokens offline. Fail closed instead. Set
+    CYPHORA_AUTH_DEV_STUB=1 to permit an insecure secret in local development
+    only (never in production).
+    """
+    dev_stub = os.getenv("CYPHORA_AUTH_DEV_STUB", "").lower() in ("1", "true", "yes")
+    if _SECRET == _DEFAULT_SECRET or not _SECRET:
+        if dev_stub:
+            logger.warning("jwt_using_insecure_default_secret_dev_stub")
+            return _SECRET
+        raise AuthenticationError(
+            "CYPHORA_JWT_SECRET is unset or the shipped default. Set a unique "
+            "secret of at least 32 characters before issuing or verifying tokens."
+        )
+    if len(_SECRET) < 32 and not dev_stub:
+        raise AuthenticationError(
+            "CYPHORA_JWT_SECRET must be at least 32 characters."
+        )
+    return _SECRET
 
 
 # ─────────────────────────────────────────────
@@ -64,7 +97,7 @@ def create_access_token(user: CyphoraUser, expires_minutes: int = _EXPIRE_MINS) 
         "iat":       now.timestamp(),
         "jti":       str(uuid.uuid4()),
     }
-    token = pyjwt.encode(payload, _SECRET, algorithm=_ALGORITHM)
+    token = pyjwt.encode(payload, _require_secure_secret(), algorithm=_ALGORITHM)
     logger.info("jwt_token_created", user_id=user.user_id, tenant_id=user.tenant_id,
                 expires_at=expiry.isoformat())
     return token
@@ -73,9 +106,6 @@ def create_access_token(user: CyphoraUser, expires_minutes: int = _EXPIRE_MINS) 
 # ─────────────────────────────────────────────
 # Token verification
 # ─────────────────────────────────────────────
-
-class AuthenticationError(Exception):
-    pass
 
 
 def verify_token(token: str) -> TokenPayload:
@@ -90,7 +120,7 @@ def verify_token(token: str) -> TokenPayload:
         raise ImportError("PyJWT is required: pip install PyJWT cryptography")
 
     try:
-        payload = pyjwt.decode(token, _SECRET, algorithms=[_ALGORITHM])
+        payload = pyjwt.decode(token, _require_secure_secret(), algorithms=[_ALGORITHM])
         return TokenPayload(
             user_id   = payload["user_id"],
             email     = payload["email"],

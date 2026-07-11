@@ -211,6 +211,7 @@ def print_results(
     verbose: bool = False,
 ) -> None:
     status = orchestrator.status()
+    per_agent = status.get("per_agent", {})
     total_triggered = sum(r["triggered"] for r in dispatch_results)
     by_type: Dict[str, int] = defaultdict(int)
     by_vendor: Dict[str, int] = defaultdict(int)
@@ -245,7 +246,7 @@ def print_results(
         print(f"    {etype:<35}  {count:>3}")
 
     print(f"\n{BD}  Agent Execution Summary{RS}")
-    for agent_name, stats in status.items():
+    for agent_name, stats in per_agent.items():
         completed = stats.get("completed", 0)
         errors = stats.get("errors", 0)
         sc = G if errors == 0 else R
@@ -263,7 +264,7 @@ def print_results(
     print(f"{BD}{C}  INVESTIGATION FINDINGS{RS}")
     print(f"{C}{'─'*72}{RS}\n")
 
-    for agent_name, stats in status.items():
+    for agent_name, stats in per_agent.items():
         last_report = stats.get("last_report")
         if not last_report:
             continue

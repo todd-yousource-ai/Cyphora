@@ -23,8 +23,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Deque, Dict, List, Optional, Set, Type
 
+import os
+
 import structlog
-from prometheus_client import Counter, Gauge, Histogram
+from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
 from acda.models.schemas import (
     AgentExecutionReport,
@@ -117,6 +119,7 @@ class AgentOrchestrator:
         self._start_time: Optional[float] = None
         self._workers: List[asyncio.Task] = []
         self._schedule_tasks: List[asyncio.Task] = []
+        self._metrics_task: Optional[asyncio.Task] = None
 
         # FIX: Use a bounded deque instead of an unbounded list.
         # Previously execution_history grew forever, causing memory leaks
@@ -160,6 +163,22 @@ class AgentOrchestrator:
         self._running = True
         self._start_time = time.monotonic()
 
+        # FIX (CQH-OBS-001): expose the Prometheus registry over HTTP so the
+        # k8s scrape annotations and any monitoring system can reach the 9
+        # metric families. Previously metrics were recorded only in-process
+        # with no exposition path, so queue saturation and drops were invisible.
+        # Set METRICS_PORT=0 to disable (e.g. in unit tests).
+        metrics_port = int(os.getenv("METRICS_PORT", "8080"))
+        if metrics_port and not getattr(self, "_metrics_server_started", False):
+            try:
+                start_http_server(metrics_port)
+                self._metrics_server_started = True
+                self._log.info("metrics_exposition_started", port=metrics_port)
+            except OSError as exc:
+                # Port already bound (e.g. multiple orchestrators in one process
+                # during tests) — log and continue rather than crash startup.
+                self._log.warning("metrics_exposition_bind_failed", error=str(exc))
+
         num_workers = min(
             self._config.max_concurrent_agents,
             max(4, len(self._agents) * 2),
@@ -183,8 +202,14 @@ class AgentOrchestrator:
             )
             self._schedule_tasks.append(task)
 
-        # Metrics updater
-        asyncio.create_task(self._metrics_loop(), name="orchestrator-metrics")
+        # Metrics updater — retain the handle so stop() can cancel it.
+        # FIX (CQH-RR-006/SA-007/INT-010): previously fire-and-forget, so the
+        # task survived stop(), accumulated across restarts, and was destroyed
+        # pending at loop close (the "Task was destroyed but it is pending"
+        # warnings). An unreferenced task can also be GC'd mid-flight.
+        self._metrics_task = asyncio.create_task(
+            self._metrics_loop(), name="orchestrator-metrics"
+        )
 
         self._log.info("orchestrator_started")
 
@@ -203,9 +228,23 @@ class AgentOrchestrator:
         except asyncio.TimeoutError:
             self._log.warning("queue_drain_timeout")
 
-        # Cancel workers
+        # Cancel workers and the metrics task.
         for task in self._workers:
             task.cancel()
+        if self._metrics_task is not None:
+            self._metrics_task.cancel()
+
+        # FIX (CQH-INT-010): await every cancelled task so none is left
+        # "destroyed but pending" at loop close.
+        pending = [*self._schedule_tasks, *self._workers]
+        if self._metrics_task is not None:
+            pending.append(self._metrics_task)
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+        self._schedule_tasks = []
+        self._workers = []
+        self._metrics_task = None
 
         self._log.info("orchestrator_stopped")
 
@@ -430,6 +469,29 @@ class AgentOrchestrator:
     # ─── Status ─────────────────────────────────────────────────
 
     def status(self) -> Dict[str, Any]:
+        # Build per-agent execution stats from the (bounded) history so the
+        # example reporters and any operator surface have a stable, typed
+        # contract. FIX (CQH-SA-001/CQH-IC-004): the flat top-level dict used
+        # to be iterated directly by the examples, so status().items() yielded
+        # ('running', True) and stats.get(...) crashed with AttributeError.
+        per_agent: Dict[str, Dict[str, Any]] = {}
+        for agent in self._agents:
+            per_agent[agent.name] = {
+                "completed": 0,
+                "errors": 0,
+                "last_report": None,
+            }
+        for report in self._execution_history:
+            bucket = per_agent.setdefault(
+                report.agent_name,
+                {"completed": 0, "errors": 0, "last_report": None},
+            )
+            if report.status == "completed":
+                bucket["completed"] += 1
+            if report.status in ("error", "timeout") or report.errors:
+                bucket["errors"] += 1
+            bucket["last_report"] = report
+
         return {
             "running": self._running,
             "uptime_seconds": (
@@ -439,4 +501,5 @@ class AgentOrchestrator:
             "queue_size": self._queue.qsize(),
             "executions_completed": len(self._execution_history),
             "agents": [a.health_check() for a in self._agents],
+            "per_agent": per_agent,
         }

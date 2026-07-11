@@ -65,6 +65,14 @@ _DEFAULT_MAX_RUNTIME_SECONDS = 120
 # ─────────────────────────────────────────────
 
 
+class _KillSwitchInterrupt(BaseException):
+    """Raised inside safe_run when kill() fires during an in-flight run.
+
+    Subclasses BaseException (not Exception) so agent run() bodies that catch
+    'except Exception' cannot accidentally swallow a kill.
+    """
+
+
 class AgentState(str, Enum):
     IDLE = "idle"
     RUNNING = "running"
@@ -189,11 +197,16 @@ class BaseAgent(abc.ABC):
         self._state = AgentState.RUNNING
         ACTIVE_AGENTS.labels(agent_name=self.name).inc()
 
+        # Race the run against the kill switch. asyncio.wait_for enforces the
+        # runtime budget; the inner race lets kill() cancel work already in
+        # flight instead of merely being checked once before run() starts.
+        run_task: Optional[asyncio.Task] = None
         try:
-            report = await asyncio.wait_for(
-                self._guarded_run(event),
-                timeout=self.max_runtime_seconds,
-            )
+            with AGENT_DURATION.labels(agent_name=self.name).time():
+                report = await asyncio.wait_for(
+                    self._guarded_run_racing_kill(event),
+                    timeout=self.max_runtime_seconds,
+                )
             AGENT_EXECUTIONS.labels(agent_name=self.name, status=report.status).inc()
 
             # Record per-action metrics
@@ -212,11 +225,69 @@ class BaseAgent(abc.ABC):
             self._log.error("execution_timeout", max_runtime=self.MAX_RUNTIME)
             raise
 
+        except _KillSwitchInterrupt:
+            # kill() fired mid-run: surface an error signal and latch KILLED.
+            self._error_count += 1
+            AGENT_EXECUTIONS.labels(agent_name=self.name, status="killed").inc()
+            self._log.warning("execution_killed_in_flight")
+            raise
+
+        except Exception:
+            # BUG FIX (OBS): a generic agent exception previously produced NO
+            # error signal — error_count stayed 0 and no metric was emitted,
+            # so a 100%-failing agent reported healthy. Record it now.
+            self._error_count += 1
+            AGENT_EXECUTIONS.labels(agent_name=self.name, status="error").inc()
+            self._log.error("execution_error", exc_info=True)
+            raise
+
         finally:
             ACTIVE_AGENTS.labels(agent_name=self.name).dec()
-            self._state = AgentState.IDLE
+            # BUG FIX (kill switch): only reset to IDLE from a live RUNNING
+            # state. A KILLED/STOPPED terminal state must be sticky so
+            # health_check()/orchestrator.status() do not report a killed
+            # agent as idle/alive.
+            if self._state == AgentState.RUNNING:
+                self._state = AgentState.IDLE
             self._last_execution = time.time()
             self._execution_count += 1
+
+    async def _guarded_run_racing_kill(self, event: SecurityEvent) -> AgentExecutionReport:
+        """
+        Run the agent while concurrently watching the kill switch. If kill()
+        fires, the in-flight run task is cancelled and a _KillSwitchInterrupt
+        is raised so no further pipeline stages execute.
+        """
+        if self._kill_switch.is_set():
+            raise RuntimeError("Kill switch is active.")
+
+        run_task = asyncio.ensure_future(self.run(event))
+        kill_task = asyncio.ensure_future(self._kill_switch.wait())
+        try:
+            done, pending = await asyncio.wait(
+                {run_task, kill_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if kill_task in done and run_task not in done:
+                # Kill fired first — cancel the in-flight run and stop.
+                run_task.cancel()
+                try:
+                    await run_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                raise _KillSwitchInterrupt()
+            # run finished first
+            return run_task.result()
+        finally:
+            if not kill_task.done():
+                kill_task.cancel()
+            # Ensure run_task is not left dangling on the timeout/kill paths.
+            if not run_task.done():
+                run_task.cancel()
+                try:
+                    await run_task
+                except (asyncio.CancelledError, Exception):
+                    pass
 
     async def _guarded_run(self, event: SecurityEvent) -> AgentExecutionReport:
         """Check kill switch, then delegate to run()."""

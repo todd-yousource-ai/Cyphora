@@ -40,6 +40,27 @@ from acda.models.schemas import SecurityEvent
 logger = structlog.get_logger(__name__)
 
 
+def _q_double(value: str) -> str:
+    """Escape a value destined for a DOUBLE-quoted query string literal.
+
+    FIX (CQH-SEC-007): event fields (user, source_ip, source_host) were
+    interpolated raw into upstream query languages (CloudWatch Insights
+    Logs, MS Graph OData, CrowdStrike FQL, PAN-OS). A crafted user/host of
+    the form  x" or 1==1 //  could alter the filter and exfiltrate other
+    tenants' telemetry. Neutralise the delimiter and control characters.
+    """
+    text = "" if value is None else str(value)
+    text = text.replace("\\", "\\\\").replace('"', '\\"')
+    return "".join(ch for ch in text if ch >= " ")
+
+
+def _q_single(value: str) -> str:
+    """Escape a value destined for a SINGLE-quoted query string literal."""
+    text = "" if value is None else str(value)
+    text = text.replace("\\", "\\\\").replace("'", "\\'")
+    return "".join(ch for ch in text if ch >= " ")
+
+
 # ─────────────────────────────────────────────────────────────
 # Configuration
 # ─────────────────────────────────────────────────────────────
@@ -155,9 +176,9 @@ class AWSCloudTrailAdapter(BaseSourceAdapter):
         # Build query — filter by user or source IP if available
         filters = []
         if event.user:
-            filters.append(f'| filter userIdentity.userName = "{event.user}"')
+            filters.append(f'| filter userIdentity.userName = "{_q_double(event.user)}"')
         if event.source_ip:
-            filters.append(f'| filter sourceIPAddress = "{event.source_ip}"')
+            filters.append(f'| filter sourceIPAddress = "{_q_double(event.source_ip)}"')
         filter_str = " ".join(filters) if filters else ""
 
         query_str = (
@@ -280,7 +301,7 @@ class AzureADAdapter(BaseSourceAdapter):
         }
         filters = [f"createdDateTime ge {since_str}", f"createdDateTime le {until_str}"]
         if event.user:
-            filters.append(f"userPrincipalName eq '{event.user}'")
+            filters.append(f"userPrincipalName eq '{_q_single(event.user)}'")
         filter_param = " and ".join(filters)
 
         records: List[Dict[str, Any]] = []
@@ -463,7 +484,7 @@ class CrowdStrikeAdapter(BaseSourceAdapter):
             "sort": "first_behavior.desc",
         }
         if event.source_host:
-            params["filter"] += f"+device.hostname:'{event.source_host}'"
+            params["filter"] += f"+device.hostname:'{_q_single(event.source_host)}'"
 
         async with httpx.AsyncClient(timeout=30) as client:
             try:
@@ -534,23 +555,31 @@ class PaloAltoAdapter(BaseSourceAdapter):
             f"(receive_time leq '{until.strftime('%Y/%m/%d %H:%M:%S')}')"
         )
         if event.source_ip:
-            time_filter += f" and (src eq '{event.source_ip}')"
+            time_filter += f" and (src eq '{_q_single(event.source_ip)}')"
 
         params = {
             "type": "log",
             "log-type": "threat",
             "query": time_filter,
             "nlogs": str(min(max_records, 5000)),
-            "key": self._api_key,
         }
 
         url = f"{self._base_url}/api/"
 
+        # FIX (CQH-SEC-005): TLS verification is now ON (was verify=False, which
+        # let a MITM impersonate Panorama and harvest the API key). Point
+        # PAN_CA_BUNDLE at your corporate CA if the firewall uses a private CA.
+        # The API key moves from the URL query string into the X-PAN-KEY header
+        # so it no longer travels in the request line / proxy logs.
+        ca_bundle = os.getenv("PAN_CA_BUNDLE")
+        verify = ca_bundle if ca_bundle else True
+        headers = {"X-PAN-KEY": self._api_key}
+
         try:
             async with httpx.AsyncClient(
-                timeout=30, verify=False
-            ) as client:  # corp certs vary
-                resp = await client.get(url, params=params)
+                timeout=30, verify=verify
+            ) as client:
+                resp = await client.get(url, params=params, headers=headers)
                 resp.raise_for_status()
                 # PAN-OS returns XML — parse it
                 import xml.etree.ElementTree as ET

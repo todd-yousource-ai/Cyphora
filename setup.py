@@ -18,13 +18,16 @@ setup(
         "jsonschema>=4.21.1",
         "click>=8.1.7",
         "rich>=13.7.0",
-        "jinja2>=3.1.3",
+        "jinja2>=3.1.6",
         "structlog>=24.1.0",
         "prometheus-client>=0.19.0",
         "httpx>=0.26.0",
     ],
     extras_require={
         "ai": ["openai>=1.12.0", "anthropic>=0.18.1"],
+        # FIX (CQH-INT-004/SA-003): the enterprise auth plane imports PyJWT and
+        # cryptography; declare them so `pip install .[auth]` resolves.
+        "auth": ["PyJWT>=2.10.1", "cryptography>=44.0.1"],
         "graph": ["neo4j>=5.17.0", "networkx>=3.2.1"],
         "streaming": ["aiokafka>=0.10.0"],
         "deploy": ["kubernetes>=29.0.0", "docker>=7.0.0"],

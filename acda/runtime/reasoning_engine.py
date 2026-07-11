@@ -99,6 +99,7 @@ class AnthropicModelAdapter(BaseModelAdapter):
             response = await client.messages.create(
                 model=self.model_id,
                 max_tokens=max_tokens,
+                temperature=temperature,
                 system=system_prompt or _default_system_prompt(task),
                 messages=[{"role": "user", "content": prompt}],
             )
@@ -216,8 +217,18 @@ def _create_adapter(model_id: str) -> BaseModelAdapter:
     for prefix, cls in _MODEL_PREFIXES.items():
         if model_id.lower().startswith(prefix):
             return cls(model_id)
-    logger.warning("unknown_model_falling_back_to_simulation", model=model_id)
-    return SimulationModelAdapter(model_id)
+    # BUG FIX (UT-002): previously an unrecognised model id (e.g. the typo
+    # 'gpt4o' missing its hyphen) silently fell back to a SimulationModelAdapter
+    # that labels everything 'threat_detected' at ~0.85 — a one-character typo
+    # failed OPEN into a fake model flagging all traffic as a threat. Fail
+    # CLOSED instead: a misconfigured model id is a configuration error and
+    # must be surfaced, not masked. Explicit simulation still works via the
+    # 'sim_' / 'model_' prefixes.
+    raise ValueError(
+        f"Unknown model id '{model_id}'. Expected a known provider prefix "
+        f"({', '.join(sorted(_MODEL_PREFIXES))}). "
+        f"For simulation use a 'sim_' or 'model_' prefixed id explicitly."
+    )
 
 
 class ReasoningEngine:
@@ -266,7 +277,21 @@ class ReasoningEngine:
 
         tasks = [self._run_model_with_timeout(adapter, payload) for adapter in self._adapters]
         scores = await asyncio.gather(*tasks, return_exceptions=False)
-        valid_scores = [s for s in scores if isinstance(s, ModelScore)]
+
+        # BUG FIX (SA-002/INT-008): a failed model call returns a ModelScore
+        # with label='error'/'timeout'/'parse_error' and score 0.0. Previously
+        # these counted as "succeeded" and their 0.0 votes were averaged into
+        # consensus, so a total LLM outage logged models_succeeded=3 and biased
+        # the vote toward "no threat". Partition real successes from failures.
+        _FAILURE_LABELS = {"error", "timeout", "parse_error"}
+        all_scores = [s for s in scores if isinstance(s, ModelScore)]
+        valid_scores = [
+            s for s in all_scores if (s.label or "").lower() not in _FAILURE_LABELS
+        ]
+        failed_scores = [
+            s for s in all_scores if (s.label or "").lower() in _FAILURE_LABELS
+        ]
+        degraded = len(failed_scores) > 0
 
         avg_score = (
             round(sum(s.score for s in valid_scores) / len(valid_scores), 4)
@@ -283,7 +308,7 @@ class ReasoningEngine:
                 "latency_ms": round(s.latency_ms or 0.0, 1),
                 "reasoning_preview": (s.reasoning or "")[:300],
             }
-            for s in valid_scores
+            for s in all_scores
         ]
 
         logger.info(
@@ -291,11 +316,15 @@ class ReasoningEngine:
             task=self.task,
             models_run=len(self._adapters),
             models_succeeded=len(valid_scores),
+            models_failed=len(failed_scores),
+            degraded=degraded,
             avg_score=avg_score,
-            model_scores=model_scores_log,          # ← NEW: per-model detail
+            model_scores=model_scores_log,          # ← per-model detail
         )
         # ── END BUG 7 FIX ─────────────────────────────────────────────
 
+        # Only genuine successes are passed to consensus; error/timeout votes
+        # are excluded so they cannot silently drag the weighted vote down.
         return ReasoningResult(scores=valid_scores, task=self.task)
 
     async def _run_model_with_timeout(self, adapter: BaseModelAdapter, payload: Dict[str, Any]) -> ModelScore:

@@ -48,10 +48,17 @@ async def demo_single_framework() -> None:
         f"  Controls   : {report.controls_satisfied} / {report.controls_total} satisfied"
     )
 
-    if report.gaps:
-        print(f"\n  Gaps ({len(report.gaps)}):")
-        for gap in report.gaps[:5]:  # show first 5
-            print(f"    • [{gap.control_id}] {gap.title} — {gap.recommendation}")
+    # FrameworkReport exposes per-control `findings`; a "gap" is a finding
+    # whose status == "gap". Derive the gap list from findings rather than a
+    # non-existent report.gaps attribute.
+    gaps = [f for f in report.findings if f.status == "gap"]
+    if gaps:
+        print(f"\n  Gaps ({len(gaps)}):")
+        for gap in gaps[:5]:  # show first 5
+            print(
+                f"    • [{gap.control.control_id}] {gap.control.title} — "
+                f"{gap.recommendation}"
+            )
 
     # Export to markdown
     md = engine.export_markdown(report)
@@ -108,7 +115,8 @@ async def demo_compliance_agent() -> None:
     await asyncio.sleep(30)
 
     status = orchestrator.status()
-    for agent_name, stats in status.items():
+    per_agent = status.get("per_agent", {})
+    for agent_name, stats in per_agent.items():
         print(f"\n  Agent : {agent_name}")
         print(
             f"  Status: completed={stats.get('completed', 0)}  errors={stats.get('errors', 0)}"

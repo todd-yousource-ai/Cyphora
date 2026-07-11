@@ -110,7 +110,8 @@ async def demo_nl_query_agent() -> None:
     await asyncio.sleep(8)
 
     status = orchestrator.status()
-    for agent_name, stats in status.items():
+    per_agent = status.get("per_agent", {})
+    for agent_name, stats in per_agent.items():
         print(f"\n  Agent : {agent_name}")
         print(
             f"  Status: completed={stats.get('completed', 0)}  errors={stats.get('errors', 0)}"
